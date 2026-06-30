@@ -11,7 +11,8 @@
  *   {
  *     "requestId": "<id returned in the original POST to the external server>",
  *     "text": "Reply text to send to the user",
- *     "mediaUrl": "optional — same format as ExternalReplyResponse.mediaUrl"
+ *     "mediaUrl": "optional — single media URL (backward compatible)",
+ *     "mediaUrls": ["optional", "array of media URLs for multi-file support"]
  *   }
  *
  * Response:
@@ -129,9 +130,14 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
 
       const replyText = typeof body.text === "string" ? body.text.trim() : "";
       const mediaUrl = typeof body.mediaUrl === "string" ? body.mediaUrl.trim() : "";
+      // 支持 mediaUrls 数组（多图/多文件）
+      const mediaUrlsRaw = Array.isArray(body.mediaUrls) ? body.mediaUrls : [];
+      const mediaUrls = mediaUrlsRaw.filter((u: unknown): u is string => typeof u === "string" && u.trim() !== "");
+      // 合并为统一的列表：mediaUrl 优先，然后 mediaUrls
+      const allMediaUrls = mediaUrl ? [mediaUrl, ...mediaUrls] : mediaUrls;
 
-      if (!replyText && !mediaUrl) {
-        respond(400, { ok: false, error: "text or mediaUrl is required" });
+      if (!replyText && allMediaUrls.length === 0) {
+        respond(400, { ok: false, error: "text or mediaUrl(s) is required" });
         return;
       }
 
@@ -146,62 +152,52 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
       }
 
       logger.info(
-        `[callback-server] delivering async reply: requestId=${requestId} to=${ctx.to} textLen=${replyText.length} mediaUrl=${mediaUrl || "none"}`,
+        `[callback-server] delivering async reply: requestId=${requestId} to=${ctx.to} textLen=${replyText.length} mediaCount=${allMediaUrls.length}`,
       );
 
       // Fire-and-forget: send the reply to WeChat.
       Promise.resolve()
         .then(async () => {
-          if (mediaUrl) {
-            // Handle media URL: download remote or resolve local path
-            let filePath: string;
-            if (isLocalFilePath(mediaUrl)) {
-              filePath = resolveMediaFilePath(mediaUrl);
-              logger.debug(`[callback-server] local media file=${filePath}`);
-            } else if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
-              logger.debug(`[callback-server] downloading remote media=${mediaUrl.slice(0, 80)}`);
-              filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
-              logger.debug(`[callback-server] remote media downloaded to=${filePath}`);
-            } else {
-              logger.warn(`[callback-server] unsupported mediaUrl scheme: ${mediaUrl.slice(0, 80)}`);
-              // Fallback to text-only
-              if (replyText) {
-                await sendMessageWeixin({
-                  to: ctx.to,
-                  text: replyText,
-                  opts: {
-                    baseUrl: ctx.baseUrl,
-                    token: ctx.token,
-                    contextToken: ctx.contextToken,
-                  },
-                });
-              }
-              return;
-            }
+          const sendOpts = {
+            baseUrl: ctx.baseUrl,
+            token: ctx.token,
+            contextToken: ctx.contextToken,
+          };
 
-            // Send media with optional text caption
-            await sendWeixinMediaFile({
-              filePath,
-              to: ctx.to,
-              text: replyText || "",
-              opts: {
-                baseUrl: ctx.baseUrl,
-                token: ctx.token,
-                contextToken: ctx.contextToken,
-              },
-              cdnBaseUrl: ctx.cdnBaseUrl,
-            });
-            logger.info(`[callback-server] media sent OK to=${ctx.to} requestId=${requestId}`);
+          if (allMediaUrls.length > 0) {
+            for (let i = 0; i < allMediaUrls.length; i++) {
+              const url = allMediaUrls[i];
+              // 只在第一条媒体附带文本 caption
+              const caption = i === 0 ? (replyText || "") : "";
+
+              let filePath: string;
+              if (isLocalFilePath(url)) {
+                filePath = resolveMediaFilePath(url);
+                logger.debug(`[callback-server] local media file=${filePath}`);
+              } else if (url.startsWith("http://") || url.startsWith("https://")) {
+                logger.debug(`[callback-server] downloading remote media=${url.slice(0, 80)}`);
+                filePath = await downloadRemoteImageToTemp(url, MEDIA_OUTBOUND_TEMP_DIR);
+                logger.debug(`[callback-server] remote media downloaded to=${filePath}`);
+              } else {
+                logger.warn(`[callback-server] unsupported mediaUrl scheme: ${url.slice(0, 80)}, skipping`);
+                continue;
+              }
+
+              await sendWeixinMediaFile({
+                filePath,
+                to: ctx.to,
+                text: caption,
+                opts: sendOpts,
+                cdnBaseUrl: ctx.cdnBaseUrl,
+              });
+              logger.info(`[callback-server] media[${i + 1}/${allMediaUrls.length}] sent OK to=${ctx.to} requestId=${requestId}`);
+            }
           } else if (replyText) {
             // Text-only reply
             await sendMessageWeixin({
               to: ctx.to,
               text: replyText,
-              opts: {
-                baseUrl: ctx.baseUrl,
-                token: ctx.token,
-                contextToken: ctx.contextToken,
-              },
+              opts: sendOpts,
             });
             logger.info(`[callback-server] text sent OK to=${ctx.to} requestId=${requestId}`);
           }
