@@ -4,7 +4,6 @@ import path from "node:path";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
-import { getWeixinRuntime } from "../runtime.js";
 import { resolveStateDir } from "../storage/state-dir.js";
 import { resolveFrameworkAllowFromPath } from "./pairing.js";
 import { logger } from "../util/logger.js";
@@ -288,6 +287,18 @@ export function loadConfigRouteTag(accountId?: string): string | undefined {
   return typeof section.routeTag === "string" && section.routeTag.trim()
     ? section.routeTag.trim()
     : undefined;
+}
+
+/**
+ * Read `botAgent` from `channels.openclaw-weixin.botAgent` in openclaw.json.
+ * Returns the raw configured string (caller is responsible for sanitization)
+ * or undefined when not set. Reuses the cached channel section.
+ */
+export function loadConfigBotAgent(): string | undefined {
+  const section = loadRouteTagSection();
+  if (!section) return undefined;
+  const value = section.botAgent;
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 /**
