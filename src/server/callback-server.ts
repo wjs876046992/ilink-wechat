@@ -151,6 +151,10 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
         return;
       }
 
+      // Cancel timeout timer since callback was received successfully
+      callbackRegistry.clearTimeout(requestId);
+      logger.debug(`[callback-server] timeout cancelled for requestId=${requestId}`);
+
       logger.info(
         `[callback-server] delivering async reply: requestId=${requestId} to=${ctx.to} textLen=${replyText.length} mediaCount=${allMediaUrls.length}`,
       );

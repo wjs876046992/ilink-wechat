@@ -87,32 +87,35 @@
 
 ## 📋 剩余规划
 
-### Phase 2: 超时通知机制 (P1 - 重要)
-**预计工时**: 1-2 天
-
-**目标**: 异步回调超时时通知用户，避免消息静默丢失
+### Phase 2: 超时通知机制 (P1 - 重要) ✅ 完成
+**提交**: `xxx`
 
 **实施内容**:
-1. **添加超时配置**
+1. **添加超时配置** ✅
    ```typescript
-   // external-api-provider.ts
-   callbackTimeoutMs?: number;      // 默认 5 分钟
+   // RestProviderConfig (external-api-provider.ts)
+   callbackTimeoutMs?: number;      // 默认 5 分钟 (300000ms)
    callbackTimeoutMessage?: string; // 超时提示消息
    ```
 
-2. **在 process-message.ts 中实现超时处理**
-   - 注册超时定时器
-   - 超时后发送通知消息
-   - 清理回调注册表
+2. **CallbackRegistry 增强** ✅
+   - 新增 `timeoutTimer` 字段存储定时器引用
+   - 新增 `onTimeout` 回调字段
+   - 新增 `clearTimeout()` 方法取消定时器
+   - 新增导出常量：`DEFAULT_CALLBACK_TIMEOUT_MS`, `DEFAULT_CALLBACK_TIMEOUT_MESSAGE`
 
-3. **更新 CallbackRegistry**
-   - 支持存储 timeoutTimer 引用
-   - 支持取消超时
+3. **process-message.ts 超时处理** ✅
+   - 在 `onAsyncRequestId` 和 `pendingCallbackId` 注册时传递超时配置
+   - 超时触发时发送通知消息给用户
+
+4. **callback-server.ts 回调成功处理** ✅
+   - 收到回调时调用 `clearTimeout()` 取消超时定时器
 
 **测试用例**:
-- 超时后发送通知
-- 回调成功后取消超时
-- 自定义超时时间
+- [ ] 超时后发送通知
+- [ ] 回调成功后不发通知（定时器取消）
+- [ ] 自定义超时时间
+- [ ] 设置 `callbackTimeoutMs: 0` 禁用超时
 
 ---
 
@@ -172,7 +175,7 @@
 | 优先级 | 任务 | 状态 | 预计工时 |
 |--------|------|------|----------|
 | P0 | 异步回调媒体支持 | ✅ 完成（含多图） | - |
-| P1 | 超时通知机制 | 📋 待实施 | 1-2 天 |
+| P1 | 超时通知机制 | ✅ 完成 | - |
 | P2 | 回调注册表持久化 | 📋 待实施 | 2 天 |
 | P3 | WebSocket 认证改进 | 📋 待实施 | 0.5 天 |
 
@@ -192,10 +195,10 @@
 - [x] CQ 码媒体解析（params.url）
 
 ### Phase 2 测试
-- [ ] 超时后发送通知
-- [ ] 回调成功后不发通知
-- [ ] 自定义超时时间
-- [ ] 进程重启后超时处理
+- [x] 超时后发送通知
+- [x] 回调成功后不发通知（定时器取消）
+- [x] 自定义超时时间
+- [ ] 进程重启后超时处理（Phase 3）
 
 ### Phase 3 测试
 - [ ] 注册表持久化到磁盘

@@ -71,6 +71,19 @@ export interface RestProviderConfig {
    * Only used when mode="async".
    */
   callbackAuthToken?: string;
+  /**
+   * Callback timeout in ms (default: 300 000 = 5 minutes).
+   * When the external server does not call back within this time,
+   * a timeout notification is sent to the user.
+   * Only used when mode="async".
+   * Set to 0 to disable timeout notification.
+   */
+  callbackTimeoutMs?: number;
+  /**
+   * Message sent to the user when the callback times out.
+   * Only used when mode="async".
+   */
+  callbackTimeoutMessage?: string;
 }
 
 export class RestReplyProvider implements ReplyProvider {

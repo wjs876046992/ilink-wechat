@@ -19,7 +19,7 @@ import { readFrameworkAllowFromList } from "../auth/pairing.js";
 import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { resolveReplyProgressMessagesEnabled } from "../config/reply-progress.js";
 import { downloadMediaFromItem } from "../media/media-download.js";
-import { callbackRegistry } from "../providers/callback-registry.js";
+import { callbackRegistry, DEFAULT_CALLBACK_TIMEOUT_MS, DEFAULT_CALLBACK_TIMEOUT_MESSAGE } from "../providers/callback-registry.js";
 import type { ReplyProvider } from "../providers/types.js";
 import { logger } from "../util/logger.js";
 import { redactBody, redactToken } from "../util/redact.js";
@@ -64,6 +64,10 @@ export type ProcessMessageDeps = {
    * Configure via channels.openclaw-weixin.provider in openclaw.json.
    */
   replyProvider?: ReplyProvider;
+  /** Callback timeout in ms (default: 300000 = 5 minutes). Set to 0 to disable. */
+  callbackTimeoutMs?: number;
+  /** Message sent when callback times out. */
+  callbackTimeoutMessage?: string;
 };
 
 /** Extract text body from item_list (for slash command detection). */
@@ -185,16 +189,40 @@ async function dispatchWithExternalProvider(
       onAsyncRequestId: (requestId) => {
         asyncContextPreRegistered = true;
         preRegisteredRequestId = requestId;
-        callbackRegistry.register(requestId, {
-          to,
-          baseUrl: deps.baseUrl,
-          token: deps.token ?? "",
-          contextToken,
-          accountId: deps.accountId,
-          cdnBaseUrl: deps.cdnBaseUrl,
-        });
+
+        // Calculate effective timeout
+        const timeoutMs = deps.callbackTimeoutMs ?? DEFAULT_CALLBACK_TIMEOUT_MS;
+        const timeoutMessage = deps.callbackTimeoutMessage ?? DEFAULT_CALLBACK_TIMEOUT_MESSAGE;
+
+        callbackRegistry.register(
+          requestId,
+          {
+            to,
+            baseUrl: deps.baseUrl,
+            token: deps.token ?? "",
+            contextToken,
+            accountId: deps.accountId,
+            cdnBaseUrl: deps.cdnBaseUrl,
+          },
+          timeoutMs > 0 ? timeoutMs : undefined,
+          timeoutMs > 0
+            ? () => {
+                logger.info(
+                  `[external-provider] async mode: timeout notification sent requestId=${requestId} to=${to}`,
+                );
+                // Send timeout notification to user
+                sendMessageWeixin({
+                  to,
+                  text: timeoutMessage,
+                  opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken },
+                }).catch((err: unknown) => {
+                  logger.error(`[external-provider] timeout notification failed: ${String(err)}`);
+                });
+              }
+            : undefined,
+        );
         logger.info(
-          `[external-provider] async mode: pre-registered callback context requestId=${requestId} to=${to}`,
+          `[external-provider] async mode: pre-registered callback context requestId=${requestId} to=${to} timeoutMs=${timeoutMs}`,
         );
       },
     });
@@ -232,17 +260,40 @@ async function dispatchWithExternalProvider(
   // (skipped when already pre-registered via onAsyncRequestId above).
   if (response.pendingCallbackId) {
     if (!asyncContextPreRegistered) {
-      callbackRegistry.register(response.pendingCallbackId, {
-        to,
-        baseUrl: deps.baseUrl,
-        token: deps.token ?? "",
-        contextToken,
-        accountId: deps.accountId,
-        cdnBaseUrl: deps.cdnBaseUrl,
-      });
+      // Calculate effective timeout
+      const timeoutMs = deps.callbackTimeoutMs ?? DEFAULT_CALLBACK_TIMEOUT_MS;
+      const timeoutMessage = deps.callbackTimeoutMessage ?? DEFAULT_CALLBACK_TIMEOUT_MESSAGE;
+
+      callbackRegistry.register(
+        response.pendingCallbackId,
+        {
+          to,
+          baseUrl: deps.baseUrl,
+          token: deps.token ?? "",
+          contextToken,
+          accountId: deps.accountId,
+          cdnBaseUrl: deps.cdnBaseUrl,
+        },
+        timeoutMs > 0 ? timeoutMs : undefined,
+        timeoutMs > 0
+          ? () => {
+              logger.info(
+                `[external-provider] async mode: timeout notification sent requestId=${response.pendingCallbackId} to=${to}`,
+              );
+              // Send timeout notification to user
+              sendMessageWeixin({
+                to,
+                text: timeoutMessage,
+                opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken },
+              }).catch((err: unknown) => {
+                logger.error(`[external-provider] timeout notification failed: ${String(err)}`);
+              });
+            }
+          : undefined,
+      );
     }
     logger.info(
-      `[external-provider] async mode: registered pending callback requestId=${response.pendingCallbackId} to=${to}`,
+      `[external-provider] async mode: registered pending callback requestId=${response.pendingCallbackId} to=${to} timeoutMs=${deps.callbackTimeoutMs ?? DEFAULT_CALLBACK_TIMEOUT_MS}`,
     );
     return;
   }
