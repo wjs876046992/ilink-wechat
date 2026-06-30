@@ -1,0 +1,25 @@
+{
+  "accounts": [
+    {
+      "accountId": "account-1-id"
+    },
+    {
+      "accountId": "account-2-id",
+      "provider": {
+        "type": "rest",
+        "endpoint": "http://localhost:8081/chat",
+        "authToken": "account-2-secret"
+      }
+    }
+  ],
+  "provider": {
+    "type": "rest",
+    "endpoint": "http://localhost:8080/chat",
+    "authToken": "default-secret",
+    "mode": "async",
+    "callbackPort": 8765,
+    "callbackPath": "/callback",
+    "callbackAuthToken": "callback-secret",
+    "timeoutMs": 30000
+  }
+}
