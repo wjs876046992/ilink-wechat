@@ -1,6 +1,6 @@
 # ilink-wechat 转发能力改进路线图
 
-## 📅 最后更新: 2026-06-30
+## 📅 最后更新: 2026-06-30 (v2)
 
 ---
 
@@ -31,46 +31,57 @@
 
 ### Phase 1: 异步回调媒体支持 (已完成)
 **分支**: `feature/async-callback-media` → 待合并  
-**提交**: `f38809f`  
+**提交**: `f38809f` → `33f8b1f`  
 **PR**: https://github.com/wjs876046992/ilink-wechat/pull/2
 
 | 修改文件 | 说明 |
 |----------|------|
 | `callback-registry.ts` | 新增 `cdnBaseUrl` 字段 |
 | `process-message.ts` | 注册回调时传入 `cdnBaseUrl` |
-| `callback-server.ts` | 支持异步回调发送媒体文件 |
+| `callback-server.ts` | 支持异步回调发送媒体文件（含多文件） |
 
 **功能支持**:
 - ✅ 本地文件路径（绝对/相对/file://）
 - ✅ 远程 HTTP/HTTPS URL（下载后上传）
 - ✅ 文本+媒体组合发送
 - ✅ 仅媒体发送
+- ✅ 多图/多文件发送（`mediaUrls` 数组）
+- ✅ CQ 码媒体解析（通过 `parseCQText` 的 `params` 属性）
 
 **回调请求格式**:
 ```json
 {
     "requestId": "cb-xxx",
     "text": "这是图片",
-    "mediaUrl": "https://example.com/image.png"
+    "mediaUrl": "https://example.com/image.png",
+    "mediaUrls": ["https://example.com/img1.png", "https://example.com/img2.png"]
 }
 ```
+
+**修复记录** (2026-06-30):
+- 修复 `parseCQText` 返回格式：使用 `params` 属性替代 `data`（sp_plugins `2f96b10b` → `4cfee35a`）
+- 新增多文件支持：`mediaUrls` 数组逐个发送（ilink-wechat `33f8b1f`，sp_plugins `ee23ca71`）
 
 ---
 
 ### 微信ClawBot适配器更新 (已完成)
 **仓库**: `sp_plugins`  
-**提交**: `03b07908`
+**提交**: `03b07908` → `ee23ca71`
 
 | 修改 | 说明 |
 |------|------|
-| 回调数据新增 mediaUrl | 支持媒体发送 |
-| 解析 CQ 码媒体 | image/video/file/record |
+| 回调数据新增 mediaUrl/mediaUrls | 支持单文件/多文件媒体发送 |
+| 解析 CQ 码媒体 | 通过 `parseCQText` 的 `params` 属性提取 URL |
 
 **支持的媒体类型**:
-- `[CQ:image,file=xxx]` → 图片
-- `[CQ:video,file=xxx]` → 视频
-- `[CQ:file,file=xxx]` → 文件
-- `[CQ:record,file=xxx]` → 语音
+- `[CQ:image,url=xxx]` → 图片
+- `[CQ:video,url=xxx]` → 视频
+- `[CQ:file,url=xxx]` → 文件
+- `[CQ:record,url=xxx]` → 语音
+
+**多文件支持**:
+- 单文件 → `{ requestId, text, mediaUrl }`
+- 多文件 → `{ requestId, text, mediaUrls: [...] }`
 
 ---
 
@@ -160,7 +171,7 @@
 
 | 优先级 | 任务 | 状态 | 预计工时 |
 |--------|------|------|----------|
-| P0 | 异步回调媒体支持 | ✅ 完成 | - |
+| P0 | 异步回调媒体支持 | ✅ 完成（含多图） | - |
 | P1 | 超时通知机制 | 📋 待实施 | 1-2 天 |
 | P2 | 回调注册表持久化 | 📋 待实施 | 2 天 |
 | P3 | WebSocket 认证改进 | 📋 待实施 | 0.5 天 |
@@ -170,13 +181,15 @@
 ## 🔧 测试检查清单
 
 ### Phase 1 测试
-- [ ] 文本消息异步回调
-- [ ] 图片消息异步回调
-- [ ] 视频消息异步回调
-- [ ] 文件消息异步回调
-- [ ] 本地文件路径发送
-- [ ] 远程 URL 下载发送
-- [ ] 文本+媒体组合发送
+- [x] 文本消息异步回调
+- [x] 图片消息异步回调
+- [x] 视频消息异步回调
+- [x] 文件消息异步回调
+- [x] 本地文件路径发送
+- [x] 远程 URL 下载发送
+- [x] 文本+媒体组合发送
+- [x] 多图发送
+- [x] CQ 码媒体解析（params.url）
 
 ### Phase 2 测试
 - [ ] 超时后发送通知
