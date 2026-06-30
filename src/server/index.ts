@@ -61,10 +61,25 @@ type ProviderConfig = {
   callbackAuthToken?: string;
 };
 
+type AccountConfig = {
+  /** Account ID (required). */
+  accountId: string;
+  /** Optional per-account provider override. If not set, uses the top-level provider. */
+  provider?: ProviderConfig;
+};
+
 type StandaloneConfig = {
   /** Explicit account ID to use (optional when only one account is registered). */
   accountId?: string;
-  /** Provider config. */
+  /** Multiple accounts configuration. When set, each account runs its own monitor. */
+  accounts?: AccountConfig[];
+  /** Provider config (used as default for all accounts). */
+  provider: ProviderConfig;
+};
+
+type ResolvedAccount = {
+  accountId: string;
+  account: ReturnType<typeof loadWeixinAccount>;
   provider: ProviderConfig;
 };
 
@@ -112,15 +127,17 @@ function loadConfig(): StandaloneConfig {
     if (channelSection?.provider) {
       return {
         accountId: typeof obj.accountId === "string" ? obj.accountId : undefined,
+        accounts: Array.isArray(obj.accounts) ? obj.accounts as AccountConfig[] : undefined,
         provider: channelSection.provider as ProviderConfig,
       };
     }
   }
 
-  // Support standalone format: { provider: {...}, accountId?: "..." }
+  // Support standalone format: { provider: {...}, accountId?: "...", accounts?: [...] }
   if (obj.provider && typeof obj.provider === "object") {
     return {
       accountId: typeof obj.accountId === "string" ? obj.accountId : undefined,
+      accounts: Array.isArray(obj.accounts) ? obj.accounts as AccountConfig[] : undefined,
       provider: obj.provider as ProviderConfig,
     };
   }
@@ -152,7 +169,7 @@ function loadConfig(): StandaloneConfig {
 // Account resolution
 // ---------------------------------------------------------------------------
 
-function resolveAccountId(preferred?: string): { accountId: string; account: ReturnType<typeof loadWeixinAccount> } {
+function resolveAccounts(cfg: StandaloneConfig): ResolvedAccount[] {
   const allIds = listIndexedWeixinAccountIds();
 
   if (allIds.length === 0) {
@@ -163,16 +180,41 @@ function resolveAccountId(preferred?: string): { accountId: string; account: Ret
     process.exit(1);
   }
 
-  if (preferred) {
-    const normalized = preferred.includes("-") ? preferred : normalizeAccountId(preferred);
+  // 优先使用 accounts 数组配置
+  if (cfg.accounts && cfg.accounts.length > 0) {
+    const resolved: ResolvedAccount[] = [];
+    for (const acc of cfg.accounts) {
+      if (!acc.accountId) {
+        printError(`Invalid accounts config: missing accountId`);
+        process.exit(1);
+      }
+      const normalizedId = acc.accountId.includes("-") ? acc.accountId : normalizeAccountId(acc.accountId);
+      const account = loadWeixinAccount(normalizedId);
+      if (!account?.token) {
+        printError(`Account "${normalizedId}" not found or has no token. Run \`login\` first.`);
+        process.exit(1);
+      }
+      resolved.push({
+        accountId: normalizedId,
+        account,
+        provider: acc.provider ?? cfg.provider,
+      });
+    }
+    return resolved;
+  }
+
+  // 兼容旧格式：单 accountId
+  if (cfg.accountId) {
+    const normalized = cfg.accountId.includes("-") ? cfg.accountId : normalizeAccountId(cfg.accountId);
     const account = loadWeixinAccount(normalized);
     if (!account?.token) {
       printError(`Account "${normalized}" not found or has no token. Run \`login\` first.`);
       process.exit(1);
     }
-    return { accountId: normalized, account };
+    return [{ accountId: normalized, account, provider: cfg.provider }];
   }
 
+  // 无 accountId 配置：单账号时自动使用，多账号时报错
   if (allIds.length === 1) {
     const accountId = allIds[0];
     const account = loadWeixinAccount(accountId);
@@ -180,12 +222,18 @@ function resolveAccountId(preferred?: string): { accountId: string; account: Ret
       printError(`Account "${accountId}" has no token. Run \`login\` first.`);
       process.exit(1);
     }
-    return { accountId, account };
+    return [{ accountId, account, provider: cfg.provider }];
   }
 
+  // 多账号但未配置 accountId
   printError(
     `Multiple accounts registered (${allIds.join(", ")}).\n` +
-      `Specify which one to use: add "accountId" to your config file.`,
+      `Add "accounts" array or "accountId" to your config file.\n\n` +
+      `Example:\n` +
+      JSON.stringify({
+        accounts: allIds.map(id => ({ accountId: id })),
+        provider: cfg.provider,
+      }, null, 2),
   );
   process.exit(1);
 }
@@ -272,59 +320,95 @@ async function runStart(): Promise<void> {
     process.exit(1);
   }
 
-  const replyProvider = createReplyProvider(cfg.provider);
-  if (!replyProvider) {
-    printError(`Failed to create reply provider from config.`);
-    process.exit(1);
+  // 解析所有需要运行的账号
+  const resolvedAccounts = resolveAccounts(cfg);
+
+  // 为每个账号创建 Provider
+  const accountRunners: Array<{
+    accountId: string;
+    replyProvider: NonNullable<ReturnType<typeof createReplyProvider>>;
+    baseUrl: string;
+    cdnBaseUrl: string;
+    token: string;
+  }> = [];
+
+  for (const resolved of resolvedAccounts) {
+    const replyProvider = createReplyProvider(resolved.provider);
+    if (!replyProvider) {
+      printError(`Failed to create reply provider for account ${resolved.accountId}.`);
+      process.exit(1);
+    }
+
+    const baseUrl = resolved.account?.baseUrl?.trim() || DEFAULT_BASE_URL;
+    const cdnBaseUrl = CDN_BASE_URL;
+    const token = resolved.account?.token ?? "";
+
+    if (!token) {
+      printError(`No token found for account ${resolved.accountId}. Run \`login\` first.`);
+      process.exit(1);
+    }
+
+    accountRunners.push({
+      accountId: resolved.accountId,
+      replyProvider,
+      baseUrl,
+      cdnBaseUrl,
+      token,
+    });
   }
 
-  const { accountId, account } = resolveAccountId(cfg.accountId);
-  const baseUrl = account?.baseUrl?.trim() || DEFAULT_BASE_URL;
-  const cdnBaseUrl = CDN_BASE_URL;
-  const token = account?.token ?? "";
-
-  if (!token) {
-    printError(`No token found for account ${accountId}. Run \`login\` first.`);
-    process.exit(1);
-  }
-
+  // 打印启动信息
   print(`\n🤖 ilink-wechat standalone server`);
-  print(`   account : ${accountId}`);
-  print(`   provider: ${replyProvider.type}${cfg.provider.mode === "async" ? " (async)" : ""}`);
-  print(`   baseUrl : ${baseUrl}`);
+  print(`   accounts: ${accountRunners.map(r => r.accountId).join(", ")}`);
+  print(`   provider: ${accountRunners[0].replyProvider.type}${cfg.provider.mode === "async" ? " (async)" : ""}`);
   print(`   logFile : ${logger.getLogFilePath()}`);
 
-  // Start the async callback server if the provider is configured for async mode.
+  // 启动回调服务器（共享）- 如果任一账号使用 async 模式
   let callbackHandle: import("./callback-server.js").CallbackServerHandle | undefined;
-  if (cfg.provider.mode === "async") {
+  const hasAsyncMode = cfg.provider.mode === "async" ||
+    resolvedAccounts.some(a => a.provider.mode === "async");
+
+  if (hasAsyncMode) {
+    // 使用第一个 async provider 的配置
+    const asyncConfig = resolvedAccounts.find(a => a.provider.mode === "async")?.provider ?? cfg.provider;
     callbackHandle = startCallbackServer({
-      port: cfg.provider.callbackPort,
-      path: cfg.provider.callbackPath,
-      authToken: cfg.provider.callbackAuthToken,
+      port: asyncConfig.callbackPort,
+      path: asyncConfig.callbackPath,
+      authToken: asyncConfig.callbackAuthToken,
     });
   }
 
   print(`\nPress Ctrl+C to stop.\n`);
 
+  // 设置优雅关闭
   const ac = new AbortController();
   const shutdown = (): void => {
-    print(`\n[ilink-wechat] Shutting down...`);
+    print(`\n[ilink-wechat] Shutting down ${accountRunners.length} account(s)...`);
     ac.abort();
     callbackHandle?.close().catch(() => undefined);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  await runStandaloneMonitor({
-    baseUrl,
-    cdnBaseUrl,
-    token,
-    accountId,
-    replyProvider,
-    abortSignal: ac.signal,
-    log: (msg) => print(msg),
-    errLog: (msg) => printError(msg),
+  // 并行启动所有账号的 monitor
+  const monitors = accountRunners.map((runner) => {
+    return runStandaloneMonitor({
+      baseUrl: runner.baseUrl,
+      cdnBaseUrl: runner.cdnBaseUrl,
+      token: runner.token,
+      accountId: runner.accountId,
+      replyProvider: runner.replyProvider,
+      abortSignal: ac.signal,
+      log: (msg) => print(`[${runner.accountId}] ${msg}`),
+      errLog: (msg) => printError(`[${runner.accountId}] ${msg}`),
+    }).catch((err) => {
+      printError(`[${runner.accountId}] Monitor crashed: ${String(err)}`);
+    });
   });
+
+  // 等待所有 monitor 结束
+  await Promise.allSettled(monitors);
+  print(`\n[ilink-wechat] All accounts stopped.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +443,7 @@ Environment variables:
   OPENCLAW_LOG_LEVEL   Log level: TRACE|DEBUG|INFO|WARN|ERROR
   ILINK_CONFIG         Path to config file
 
-Config file (ilink-wechat.json or openclaw.json) — sync mode (default):
+Config file — single account (sync mode):
   {
     "provider": {
       "type": "rest",
@@ -369,7 +453,7 @@ Config file (ilink-wechat.json or openclaw.json) — sync mode (default):
     }
   }
 
-Config file — async callback mode:
+Config file — single account (async callback mode):
   {
     "provider": {
       "type": "rest",
@@ -381,6 +465,29 @@ Config file — async callback mode:
       "callbackAuthToken": "callback-secret"
     }
   }
+
+Config file — multiple accounts:
+  {
+    "accounts": [
+      { "accountId": "account-1" },
+      {
+        "accountId": "account-2",
+        "provider": { "type": "rest", "endpoint": "http://localhost:8081/chat2" }
+      }
+    ],
+    "provider": {
+      "type": "rest",
+      "endpoint": "http://localhost:8080/chat",
+      "mode": "async",
+      "callbackPort": 8765,
+      "callbackPath": "/callback"
+    }
+  }
+
+  In multi-account mode:
+  - Each account runs its own long-poll monitor
+  - Accounts can share the same provider or have per-account providers
+  - Async callback server is shared across all accounts
 
   In async mode the bot POSTs the message to your server and returns immediately.
   Your server calls back to http://<bot-host>:<callbackPort><callbackPath> with:
