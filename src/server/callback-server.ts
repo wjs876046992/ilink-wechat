@@ -24,10 +24,29 @@
  */
 
 import http from "node:http";
+import path from "node:path";
+
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 
 import { callbackRegistry } from "../providers/callback-registry.js";
 import { sendMessageWeixin } from "../messaging/send.js";
+import { sendWeixinMediaFile } from "../messaging/send-media.js";
+import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { logger } from "../util/logger.js";
+
+const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
+
+/** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
+function isLocalFilePath(mediaUrl: string): boolean {
+  return !mediaUrl.includes("://");
+}
+
+/** Resolve the effective filePath from a mediaUrl. */
+function resolveMediaFilePath(mediaUrl: string): string {
+  if (mediaUrl.startsWith("file://")) return new URL(mediaUrl).pathname;
+  if (!path.isAbsolute(mediaUrl)) return path.resolve(mediaUrl);
+  return mediaUrl;
+}
 
 export type CallbackServerConfig = {
   /** Port to listen on (default: 8765). */
@@ -133,7 +152,48 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
       // Fire-and-forget: send the reply to WeChat.
       Promise.resolve()
         .then(async () => {
-          if (replyText) {
+          if (mediaUrl) {
+            // Handle media URL: download remote or resolve local path
+            let filePath: string;
+            if (isLocalFilePath(mediaUrl)) {
+              filePath = resolveMediaFilePath(mediaUrl);
+              logger.debug(`[callback-server] local media file=${filePath}`);
+            } else if (mediaUrl.startsWith("http://") || mediaUrl.startsWith("https://")) {
+              logger.debug(`[callback-server] downloading remote media=${mediaUrl.slice(0, 80)}`);
+              filePath = await downloadRemoteImageToTemp(mediaUrl, MEDIA_OUTBOUND_TEMP_DIR);
+              logger.debug(`[callback-server] remote media downloaded to=${filePath}`);
+            } else {
+              logger.warn(`[callback-server] unsupported mediaUrl scheme: ${mediaUrl.slice(0, 80)}`);
+              // Fallback to text-only
+              if (replyText) {
+                await sendMessageWeixin({
+                  to: ctx.to,
+                  text: replyText,
+                  opts: {
+                    baseUrl: ctx.baseUrl,
+                    token: ctx.token,
+                    contextToken: ctx.contextToken,
+                  },
+                });
+              }
+              return;
+            }
+
+            // Send media with optional text caption
+            await sendWeixinMediaFile({
+              filePath,
+              to: ctx.to,
+              text: replyText || "",
+              opts: {
+                baseUrl: ctx.baseUrl,
+                token: ctx.token,
+                contextToken: ctx.contextToken,
+              },
+              cdnBaseUrl: ctx.cdnBaseUrl,
+            });
+            logger.info(`[callback-server] media sent OK to=${ctx.to} requestId=${requestId}`);
+          } else if (replyText) {
+            // Text-only reply
             await sendMessageWeixin({
               to: ctx.to,
               text: replyText,
@@ -143,13 +203,7 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
                 contextToken: ctx.contextToken,
               },
             });
-          }
-          // mediaUrl delivery is not yet supported in async mode (requires CDN upload).
-          // A future enhancement can add it here.
-          if (mediaUrl && !replyText) {
-            logger.warn(
-              `[callback-server] mediaUrl-only async replies are not yet supported (requestId=${requestId})`,
-            );
+            logger.info(`[callback-server] text sent OK to=${ctx.to} requestId=${requestId}`);
           }
         })
         .catch((err: unknown) => {

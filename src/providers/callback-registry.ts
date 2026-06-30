@@ -24,6 +24,8 @@ export type PendingCallbackContext = {
   contextToken?: string;
   /** Bot account ID (for logging). */
   accountId: string;
+  /** Bot CDN base URL — required for media file uploads. */
+  cdnBaseUrl: string;
   /** Monotonic expiry timestamp (Date.now() + TTL). */
   expiresAt: number;
 };
