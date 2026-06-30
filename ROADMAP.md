@@ -103,38 +103,10 @@
    - 使用 `startCleanup()` 替代内联 setInterval
    - `close()` 时调用 `stopCleanup()` 清理资源
 
-**配置项** (可选):
-```typescript
-// 在启动时调用
-callbackRegistry.setEntryTtl(5 * 60 * 1000);  // 5分钟过期
-```
-
 ---
 
-### Phase 3: 回调注册表持久化 (P2)
-**预计工时**: 2 天
-
-**目标**: 进程重启后恢复待处理回调，避免消息丢失
-
-**实施内容**:
-1. **创建持久化存储模块**
-   ```typescript
-   // src/storage/callback-store.ts
-   export class CallbackStore {
-     save(entries: Map<string, PersistedCallbackEntry>): void;
-     load(): Map<string, PersistedCallbackEntry>;
-     clear(): void;
-   }
-   ```
-
-2. **修改 CallbackRegistry**
-   - 添加 initStore(accountId) 方法
-   - 注册/删除时自动持久化
-   - 启动时从磁盘恢复
-
-3. **在 channel.ts 中初始化存储**
-
-**存储路径**: `<stateDir>/openclaw-weixin/callbacks/<accountId>.pending.json`
+### ~~Phase 3: 回调注册表持久化~~ (已取消)
+**原因**: 重启不频繁，丢失可接受
 
 ---
 
@@ -164,11 +136,11 @@ callbackRegistry.setEntryTtl(5 * 60 * 1000);  // 5分钟过期
 
 ## 📊 优先级排序
 
-| 优先级 | 任务 | 状态 | 预计工时 |
-|--------|------|------|----------|
-| P0 | 异步回调媒体支持 | ✅ 完成（含多图） | - |
-| P1 | 超时通知机制 | ✅ 完成 | - |
-| P2 | 回调注册表持久化 | 📋 待实施 | 2 天 |
+| 优先级 | 任务 | 状态 | 备注 |
+|--------|------|------|------|
+| P0 | 异步回调媒体支持 | ✅ 完成 | 含多图 |
+| P1 | 优化过期清理机制 | ✅ 完成 | - |
+| ~~P2~~ | ~~回调注册表持久化~~ | ❌ 取消 | 重启不频繁，丢失可接受 |
 | P3 | WebSocket 认证改进 | 📋 待实施 | 0.5 天 |
 
 ---
@@ -191,12 +163,6 @@ callbackRegistry.setEntryTtl(5 * 60 * 1000);  // 5分钟过期
 - [x] 同一 requestId 可多次消费
 - [x] 自定义过期时间
 - [x] 清理定时器正确启动/停止
-
-### Phase 3 测试
-- [ ] 注册表持久化到磁盘
-- [ ] 启动时恢复注册表
-- [ ] 过期条目过滤
-- [ ] 进程重启后恢复回调
 
 ---
 
