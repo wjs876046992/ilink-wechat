@@ -179,9 +179,6 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
           typingTicket: cachedConfig.typingTicket,
           log: opts.runtime?.log ?? (() => {}),
           errLog,
-          // Callback timeout configuration from channel config
-          callbackTimeoutMs: (config as Record<string, unknown>).callbackTimeoutMs as number | undefined,
-          callbackTimeoutMessage: (config as Record<string, unknown>).callbackTimeoutMessage as string | undefined,
         });
       }
     } catch (err) {

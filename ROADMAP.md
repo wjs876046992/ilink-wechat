@@ -87,35 +87,27 @@
 
 ## 📋 剩余规划
 
-### Phase 2: 超时通知机制 (P1 - 重要) ✅ 完成
-**提交**: `xxx`
+### Phase 2: 优化过期清理机制 (P1 - 重要) ✅ 完成
+**提交**: `bd240ec`
+
+**设计原则**: 回调可多次消费，不设超时限制
 
 **实施内容**:
-1. **添加超时配置** ✅
-   ```typescript
-   // RestProviderConfig (external-api-provider.ts)
-   callbackTimeoutMs?: number;      // 默认 5 分钟 (300000ms)
-   callbackTimeoutMessage?: string; // 超时提示消息
-   ```
+1. **CallbackRegistry 优化** ✅
+   - 新增 `startCleanup()` / `stopCleanup()` 方法管理清理定时器
+   - 新增 `setEntryTtl(ms)` 支持自定义过期时间
+   - 清理间隔从 60s 优化为 30s
+   - 导出 `DEFAULT_ENTRY_TTL_MS` 常量 (10分钟)
 
-2. **CallbackRegistry 增强** ✅
-   - 新增 `timeoutTimer` 字段存储定时器引用
-   - 新增 `onTimeout` 回调字段
-   - 新增 `clearTimeout()` 方法取消定时器
-   - 新增导出常量：`DEFAULT_CALLBACK_TIMEOUT_MS`, `DEFAULT_CALLBACK_TIMEOUT_MESSAGE`
+2. **callback-server.ts 重构** ✅
+   - 使用 `startCleanup()` 替代内联 setInterval
+   - `close()` 时调用 `stopCleanup()` 清理资源
 
-3. **process-message.ts 超时处理** ✅
-   - 在 `onAsyncRequestId` 和 `pendingCallbackId` 注册时传递超时配置
-   - 超时触发时发送通知消息给用户
-
-4. **callback-server.ts 回调成功处理** ✅
-   - 收到回调时调用 `clearTimeout()` 取消超时定时器
-
-**测试用例**:
-- [ ] 超时后发送通知
-- [ ] 回调成功后不发通知（定时器取消）
-- [ ] 自定义超时时间
-- [ ] 设置 `callbackTimeoutMs: 0` 禁用超时
+**配置项** (可选):
+```typescript
+// 在启动时调用
+callbackRegistry.setEntryTtl(5 * 60 * 1000);  // 5分钟过期
+```
 
 ---
 
@@ -195,10 +187,10 @@
 - [x] CQ 码媒体解析（params.url）
 
 ### Phase 2 测试
-- [x] 超时后发送通知
-- [x] 回调成功后不发通知（定时器取消）
-- [x] 自定义超时时间
-- [ ] 进程重启后超时处理（Phase 3）
+- [x] 过期条目自动清理
+- [x] 同一 requestId 可多次消费
+- [x] 自定义过期时间
+- [x] 清理定时器正确启动/停止
 
 ### Phase 3 测试
 - [ ] 注册表持久化到磁盘

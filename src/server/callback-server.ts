@@ -76,8 +76,8 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
   const cbPath = cfg.path ?? DEFAULT_PATH;
   const authToken = cfg.authToken?.trim() || undefined;
 
-  // Periodically clean up expired registry entries (every minute).
-  const cleanupInterval = setInterval(() => callbackRegistry.cleanup(), 60_000);
+  // Start periodic cleanup of expired registry entries
+  callbackRegistry.startCleanup();
 
   const server = http.createServer((req, res) => {
     const respond = (status: number, body: unknown): void => {
@@ -151,10 +151,6 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
         return;
       }
 
-      // Cancel timeout timer since callback was received successfully
-      callbackRegistry.clearTimeout(requestId);
-      logger.debug(`[callback-server] timeout cancelled for requestId=${requestId}`);
-
       logger.info(
         `[callback-server] delivering async reply: requestId=${requestId} to=${ctx.to} textLen=${replyText.length} mediaCount=${allMediaUrls.length}`,
       );
@@ -227,7 +223,7 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
 
   return {
     close(): Promise<void> {
-      clearInterval(cleanupInterval);
+      callbackRegistry.stopCleanup();
       return new Promise((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
