@@ -18,12 +18,13 @@ export async function sendWeixinMediaFile(params: {
   filePath: string;
   to: string;
   text: string;
-  opts: WeixinApiOptions & { contextToken?: string };
+  opts: WeixinApiOptions & { contextToken?: string; runId?: string };
   cdnBaseUrl: string;
 }): Promise<{ messageId: string }> {
   const { filePath, to, text, opts, cdnBaseUrl } = params;
   const mime = getMimeFromFilename(filePath);
   const uploadOpts: WeixinApiOptions = { baseUrl: opts.baseUrl, token: opts.token };
+  const sendOpts = { ...opts };
 
   if (mime.startsWith("video/")) {
     logger.info(`[weixin] sendWeixinMediaFile: uploading video filePath=${filePath} to=${to}`);
@@ -36,7 +37,7 @@ export async function sendWeixinMediaFile(params: {
     logger.info(
       `[weixin] sendWeixinMediaFile: video upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
     );
-    return sendVideoMessageWeixin({ to, text, uploaded, opts });
+    return sendVideoMessageWeixin({ to, text, uploaded, opts: sendOpts });
   }
 
   if (mime.startsWith("image/")) {
@@ -50,7 +51,7 @@ export async function sendWeixinMediaFile(params: {
     logger.info(
       `[weixin] sendWeixinMediaFile: image upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
     );
-    return sendImageMessageWeixin({ to, text, uploaded, opts });
+    return sendImageMessageWeixin({ to, text, uploaded, opts: sendOpts });
   }
 
   // File attachment: pdf, doc, zip, etc.
@@ -68,5 +69,5 @@ export async function sendWeixinMediaFile(params: {
   logger.info(
     `[weixin] sendWeixinMediaFile: file upload done filekey=${uploaded.filekey} size=${uploaded.fileSize}`,
   );
-  return sendFileMessageWeixin({ to, text, fileName, uploaded, opts });
+  return sendFileMessageWeixin({ to, text, fileName, uploaded, opts: sendOpts });
 }

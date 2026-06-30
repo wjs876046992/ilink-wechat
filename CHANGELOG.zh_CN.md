@@ -4,11 +4,100 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/) 格式。
 
-## [2.1.8] - 2026-04-16
+## [2.4.5] - 2026-06-22
+
+### 新增
+
+- **`classifyFetchError` — 网络错误分类：** `src/api/api.ts` 新增 `classifyFetchError` 工具函数，将 fetch 级错误分类为 `dns` / `tcp` / `tls` / `timeout` / `unknown`。`apiGetFetch` 与 `apiPostFetch` 在失败时输出结构化日志（type, description, code），便于排查网络问题。覆盖 ENOTFOUND、ECONNREFUSED、ETIMEDOUT、SSL/TLS、AbortError 等场景的完整测试。
+- **`sendMessage` 返回值校验：** `sendMessage` 现在解析服务端返回的 `SendMessageResp`（`ret` / `errmsg`），`ret` 非零时抛错，避免消息发送静默失败。
+
+### 变更
+
+- **`SESSION_EXPIRED_ERRCODE` → `STALE_TOKEN_ERRCODE`：** 在 `src/api/session-guard.ts` 中重命名，更准确地描述 token 过期（-14 表示 token 失效，而非 session 过期）。`monitor.ts` 与测试中所有引用同步更新。
+- **错误日志改进：**
+  - `monitor.ts` 中 `getUpdates` 的错误日志使用 `classifyFetchError` 输出分类信息（type, description, code）。
+  - `monitor.ts` 移除重复的 `errLog` 日志行，仅保留 `aLog.error`。
+  - CDN 上传失败日志（`cdn-upload.ts`）增加脱敏 URL 和错误 cause 信息。
+  - `downloadRemoteImageToTemp`（`upload.ts`）增加 fetch 网络错误详情日志。
+  - API GET/POST fetch 失败日志（`api.ts`）增加脱敏 URL、超时设置及错误分类信息。
+- **最低宿主版本升级：** `peerDependencies.openclaw` 和 `install.minHostVersion` 从 `>=2026.3.22` 升至 `>=2026.5.12`。
+
+### 新增（开发/工程）
+
+- **`outbound-hooks.test.ts`：** 新增测试文件，覆盖 `applyWeixinMessageSendingHook`（无 hook、内容修改、取消、错误容错）和 `emitWeixinMessageSent`（无 hook、成功、失败走 fire-and-forget）各场景。
 
 ### 修复
 
-- **异步回调多轮对话 404 问题：** `callbackRegistry.consume()` 在第一次成功查找回调记录后会立即将其删除。当外部服务器以相同 `requestId` 再次回调时（例如交互式 SSH/密码输入流程），记录已被删除，回调服务器返回 `404 unknown or expired requestId`。将 `consume()` 改为 `get()`，查找时**不再删除**记录——记录保留至 10 分钟 TTL 到期，允许同一 `requestId` 在 TTL 窗口内多次回调。
+- **`pairing.test.ts` mock 路径：** `vi.mock` 目标从 `"openclaw/plugin-sdk"` 修正为 `"openclaw/plugin-sdk/infra-runtime"`。
+- **`api.test.ts` sendMessage 测试 mock：** 成功用例的 mock 返回值从 `""` 改为 `"{}"`，与 `sendMessage` 新增的响应解析逻辑一致。
+
+## [2.4.4] - 2026-05-22
+
+### 新增
+
+- **工具调用进度消息：** 模型执行 tool 时，发送 `TOOL_CALL_START` / `TOOL_CALL_RESULT` 进度消息，可通过 `replyProgressMessages` 开关控制（默认开启）。
+- **请求中断信号支持：** `apiPostFetch` / `getUpdates` 现在接受外部的 `AbortSignal`。当网关停止或热重载频道时，正在进行的 long-poll 请求会被立即取消，无需等待服务端超时。
+
+## [2.4.3] - 2026-05-08
+
+### 修复
+
+- **`iLink-App-Id` / `iLink-App-ClientVersion` 请求头在生产环境为空 / `0`。** `readPackageJson` 用固定的 `../../` 从 `import.meta.url` 推算 `package.json`，但 TypeScript 构建（`tsconfig.include` 同时包含 `index.ts` 和 `src/**/*.ts`）实际产物是 `dist/src/api/api.js`（多出一层 `src/`），导致解析到不存在的 `dist/package.json`，catch 返回 `{}`。改为从当前模块所在目录向上逐级查找，并通过 `name` 包含 `openclaw-weixin` 或存在 `ilink_appid` 字段来确认是本插件自己的 `package.json`，同时兼容开发态（`src/api/`）和发布态（`dist/src/api/`）布局。`src/api/api.test.ts` 新增 5 个用例覆盖编译产物布局、开发布局、途经 `node_modules/<dep>/package.json` 不被误识别、找不到时返回 `{}`、坏 JSON 容错继续向上查找。
+- **`openclaw channels login` 在 "已连接过此 OpenClaw" 场景下被误判为失败。** 服务端返回 `binded_redirect` 时本地凭据其实仍有效，但旧逻辑返回 `connected: false`，`channel.ts` 的 `auth.login` 据此 `throw`，CLI 非零退出，导致 `openclaw-weixin-installer` 等自动化脚本误打印"首次连接未完成"。`WeixinQrWaitResult` 新增 `alreadyConnected` 字段，QR 轮询在 `binded_redirect` 时置为 `true`；`auth.login` 据此仅记录消息、不抛错，CLI 以 0 退出。
+
+## [2.4.2] - 2026-05-07
+
+### 修复
+
+- **Node 24 / undici 兼容性——所有请求 `TypeError: fetch failed`。** 从 `buildHeaders` 中移除手动设置的 `Content-Length`。Node 24 自带的 undici 不允许调用方预设 `Content-Length`，会以 `UND_ERR_INVALID_ARG: invalid content-length header` 拒绝整个请求，导致所有 CGI 调用失败。改由 `fetch` 根据请求体自动计算，恢复在 Node 24 下的网络调用。
+- **OpenClaw ≥ 2026.5.x——微信 runtime 初始化超时无限重启。** 移除模块作用域的 `pluginRuntime` 全局变量（同时删掉 `src/runtime.ts`），改为按调用从网关 ctx 中读取 `ctx.channelRuntime`。原先的全局是在插件注册阶段写入的，但较新宿主改为按调用注入 runtime surface，启动时拿不到/拿到旧值，channel 启动一直超时进而被反复重启。
+
+### 移除
+
+- **冗余脚本与入口：** 删除调试用的 `scripts/test-full-upload.ts` / `scripts/test-upload-url.ts`，以及遗留的 `index.ts` 转发文件。对调用方无行为变更。
+
+## [2.4.1] - 2026-05-04
+
+### 新增
+
+- **npm 包内携带 dist 产物作为 channel 入口：** `package.json` 的 `files` 加入 `dist/`，`openclaw.runtimeExtensions` 设为 `["./dist/index.js"]`；宿主直接加载预编译的 JS 入口，不再依赖装包时的 TypeScript 源码，避免在较严格的宿主版本上出现 `requires compiled runtime output for TypeScript entry index.ts` 错误。
+- **`openclaw.plugin.json` 频道配置：** 在 `openclaw.plugin.json` 中声明 `channels` 与 `channelConfigs`，使较新宿主（≥ 2026.4.x）能直接渲染频道选择 UI，无需回退到 `package.json#openclaw`。
+
+## [2.3.1] - 2026-04-28
+
+### 新增
+
+- **`bot_agent` 请求字段：** 上行 CGI 现在携带由上层应用提供的 `bot_agent`（类似 UA 的 `name/version (comment)` 语法，支持多个 product），按上层应用的 channel 配置传入；`src/api/api.ts` 中的 `sanitizeBotAgent` 负责清洗与长度上限，缺失或不合法时回落为 `OpenClaw`。
+- **扫码时上送 `local_token_list`：** `fetchQRCode` 现在带上本地最近 10 个 `bot_token`，让服务端识别"已绑定到本端"的 bot 并下发 `binded_redirect`，避免重复发会话。
+- **配对码登录流程：** 服务端要求二次校验时（`need_verifycode` / `verify_code_blocked`），`waitForWeixinLogin` 通过 stdin 提示用户输入 `verify_code` 并做有限次重试。
+- **`binded_redirect` 处理：** QR 轮询新增分支，输出 `✅ 已连接过此 OpenClaw，无需重复连接。` 并优雅返回。
+- **连接状态通知（start/stop）：** `gateway.startAccount` 在 provider 注册后调用 `notifyStart`，新增的 `gateway.stopAccount` hook 调用 `notifyStop`，便于上游微信服务端对账户在线状态进行对账。
+
+### 变更
+
+- **扫码登录文案：** 调整 QR / 扫码相关的提示文案；同时移除 `fetchQRCode` / `startWeixinLoginWithQr` 的客户端超时，长轮询仅受服务端与网络栈限制。
+
+## [2.1.10] - 2026-04-24
+
+### 新增
+
+- **连接状态通知（start/stop）首次引入：** 账号启动时发送 `notifyStart`，关闭时通过新的 `gateway.stopAccount` hook 发送 `notifyStop`。该能力在后续 2.3.x 中保留。
+
+## [2.1.9] - 2026-04-20
+
+### 新增
+
+- **外发 hook 支持：** 为所有外发路径（`sendText`、`sendMedia`、`process-message` 中的入站回复 `deliver`）接入 `message_sending`（发送前拦截/修改）和 `message_sent`（发送后通知）hook。hook 逻辑抽取至共享模块 `src/messaging/outbound-hooks.ts`。
+
+### 变更
+
+- **清理：** 移除 `sendWeixinOutbound` 签名中未使用的 `mediaUrl` 参数。
+
+## [2.1.8] - 2026-04-07
+
+### 变更
+
+- **Markdown 过滤器：** `StreamingMarkdownFilter` 放开了更多 Markdown 格式的保留。
 
 ## [2.1.7] - 2026-04-07
 
