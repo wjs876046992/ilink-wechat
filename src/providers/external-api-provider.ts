@@ -268,8 +268,15 @@ export class RestReplyProvider implements ReplyProvider {
 export interface WsProviderConfig {
   type: "ws";
   endpoint: string;
-  /** Bearer token sent in the Authorization header on connect. */
+  /** Auth token for WebSocket connection. */
   authToken?: string;
+  /**
+   * How to send the auth token:
+   * - "query": append ?token=xxx to the WebSocket URL (default)
+   * - "message": include authToken field in the first message payload
+   * - "both": send in both URL query and message payload
+   */
+  authMode?: "query" | "message" | "both";
   /** Per-request timeout in ms (default: 30 000). */
   timeoutMs?: number;
   /** Message sent to the user when the WS server fails or times out. */
@@ -312,10 +319,18 @@ export class WsReplyProvider implements ReplyProvider {
     timeoutMs: number,
   ): Promise<string | undefined> {
     return new Promise((resolve, reject) => {
-      // Node.js 22's native WebSocket does not support custom headers in the constructor.
-      // Authentication must be embedded in the URL (e.g. ws://host/ws?token=xyz) or
-      // validated server-side from the authToken field in the message payload below.
-      const ws = new globalThis.WebSocket(this.cfg.endpoint);
+      const token = this.cfg.authToken?.trim();
+      const authMode = this.cfg.authMode ?? "query";
+
+      // Build WebSocket URL with optional query token
+      let wsUrl = this.cfg.endpoint;
+      if (token && (authMode === "query" || authMode === "both")) {
+        const url = new URL(wsUrl);
+        url.searchParams.set("token", token);
+        wsUrl = url.toString();
+      }
+
+      const ws = new globalThis.WebSocket(wsUrl);
 
       const t = setTimeout(() => {
         ws.close();
@@ -328,19 +343,21 @@ export class WsReplyProvider implements ReplyProvider {
       };
 
       ws.onopen = () => {
-        const payload = JSON.stringify({
+        const payload: Record<string, unknown> = {
           type: "message",
           from: req.from,
           body: req.body,
           contextToken: req.contextToken,
           accountId: req.accountId,
-          // authToken is included in the payload so the server can validate the request.
-          // For URL-based auth, embed the token directly in the endpoint field
-          // (e.g. "ws://localhost:8080/ws?token=your-secret-token").
-          ...(this.cfg.authToken?.trim() ? { authToken: this.cfg.authToken.trim() } : {}),
           ...(req.mediaPath ? { mediaPath: req.mediaPath, mediaType: req.mediaType } : {}),
-        });
-        ws.send(payload);
+        };
+
+        // Include authToken in message payload if mode is "message" or "both"
+        if (token && (authMode === "message" || authMode === "both")) {
+          payload.authToken = token;
+        }
+
+        ws.send(JSON.stringify(payload));
       };
 
       ws.onmessage = (event: MessageEvent<unknown>) => {

@@ -110,27 +110,29 @@
 
 ---
 
-### Phase 4: WebSocket 认证改进 (P3)
-**预计工时**: 0.5 天
-
-**目标**: 支持更安全的认证方式
+### Phase 4: WebSocket 认证改进 (P3) ✅ 完成
 
 **实施内容**:
-1. **支持 Query 参数认证**
+1. **新增 authMode 配置** ✅
    ```typescript
-   const url = new URL(endpoint);
-   url.searchParams.set('token', this.cfg.authToken);
-   const ws = new globalThis.WebSocket(url.toString());
+   authMode?: "query" | "message" | "both";
+   // - "query": URL 参数认证 (默认)
+   // - "message": 消息体认证
+   // - "both": 两者都发
    ```
 
-2. **支持消息体认证**
-   ```typescript
-   const payload = JSON.stringify({
-     type: "message",
-     authToken: this.cfg.authToken,
-     // ... 其他字段
-   });
-   ```
+2. **URL 参数认证** ✅ - 自动拼接 `?token=xxx`
+3. **消息体认证** ✅ - payload 中包含 `authToken` 字段
+
+**配置示例**:
+```json
+{
+  "type": "ws",
+  "endpoint": "ws://localhost:8080/ws",
+  "authToken": "your-secret-token",
+  "authMode": "query"
+}
+```
 
 ---
 
@@ -141,7 +143,7 @@
 | P0 | 异步回调媒体支持 | ✅ 完成 | 含多图 |
 | P1 | 优化过期清理机制 | ✅ 完成 | - |
 | ~~P2~~ | ~~回调注册表持久化~~ | ❌ 取消 | 重启不频繁，丢失可接受 |
-| P3 | WebSocket 认证改进 | 📋 待实施 | 0.5 天 |
+| P3 | WebSocket 认证改进 | ✅ 完成 | query/message/both |
 
 ---
 
