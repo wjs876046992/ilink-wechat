@@ -291,7 +291,7 @@ async function dispatchWithExternalProvider(
       } else {
         logger.warn(`[external-provider] unrecognised mediaUrl scheme, falling back to text-only`);
         await sendMessageWeixin({ to, text: hookedText, opts: sendOpts });
-        emitWeixinMessageSent({ to, content: hookedText, success: true, accountId: deps.accountId });
+        void emitWeixinMessageSent({ to, content: hookedText, success: true, accountId: deps.accountId });
         return;
       }
       await sendWeixinMediaFile({
@@ -301,16 +301,16 @@ async function dispatchWithExternalProvider(
         opts: sendOpts,
         cdnBaseUrl: deps.cdnBaseUrl,
       });
-      emitWeixinMessageSent({ to, content: hookedText, success: true, accountId: deps.accountId });
+      void emitWeixinMessageSent({ to, content: hookedText, success: true, accountId: deps.accountId });
       logger.info(`[external-provider] media sent OK to=${to}`);
     } else {
       await sendMessageWeixin({ to, text: hookedText, opts: sendOpts });
-      emitWeixinMessageSent({ to, content: hookedText, success: true, accountId: deps.accountId });
+      void emitWeixinMessageSent({ to, content: hookedText, success: true, accountId: deps.accountId });
       logger.info(`[external-provider] text sent OK to=${to}`);
     }
   } catch (err) {
     logger.error(`[external-provider] send FAILED to=${to} err=${String(err)}`);
-    emitWeixinMessageSent({ to, content: hookedText, success: false, error: String(err), accountId: deps.accountId });
+    void emitWeixinMessageSent({ to, content: hookedText, success: false, error: String(err), accountId: deps.accountId });
     const errMsg = err instanceof Error ? err.message : String(err);
     await sendWeixinErrorNotice({
       to,
@@ -730,7 +730,7 @@ export async function processOneMessage(
                 contextToken,
                 runId,
               }});
-              emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
+              void emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
               logger.info(`outbound: text sent to=${ctx.To}`);
               return;
             }
@@ -741,7 +741,7 @@ export async function processOneMessage(
               opts: { baseUrl: deps.baseUrl, token: deps.token, contextToken, runId },
               cdnBaseUrl: deps.cdnBaseUrl,
             });
-            emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
+            void emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
             logger.info(`outbound: media sent OK to=${ctx.To}`);
           } else {
             logger.debug(`outbound: sending text message to=${ctx.To}`);
@@ -751,7 +751,7 @@ export async function processOneMessage(
               contextToken,
               runId,
             }});
-            emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
+            void emitWeixinMessageSent({ to: ctx.To, content: text, success: true, accountId: deps.accountId, runId });
             logger.info(`outbound: text sent OK to=${ctx.To}`);
           }
         } catch (err) {

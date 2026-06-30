@@ -144,10 +144,10 @@ async function sendWeixinOutbound(params: {
       token: account.token,
       contextToken: params.contextToken,
     }});
-    emitWeixinMessageSent({ to: params.to, content: filteredText, success: true, accountId: account.accountId });
+    void emitWeixinMessageSent({ to: params.to, content: filteredText, success: true, accountId: account.accountId });
     return { channel: "openclaw-weixin", messageId: result.messageId };
   } catch (err) {
-    emitWeixinMessageSent({ to: params.to, content: filteredText, success: false, error: String(err), accountId: account.accountId });
+    void emitWeixinMessageSent({ to: params.to, content: filteredText, success: false, error: String(err), accountId: account.accountId });
     throw err;
   }
 }
@@ -274,10 +274,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
             opts: { baseUrl: account.baseUrl, token: account.token, contextToken },
             cdnBaseUrl: account.cdnBaseUrl,
           });
-          emitWeixinMessageSent({ to: ctx.to, content: text, success: true, accountId: account.accountId });
+          void emitWeixinMessageSent({ to: ctx.to, content: text, success: true, accountId: account.accountId });
           return { channel: "openclaw-weixin", messageId: result.messageId };
         } catch (err) {
-          emitWeixinMessageSent({ to: ctx.to, content: text, success: false, error: String(err), accountId: account.accountId });
+          void emitWeixinMessageSent({ to: ctx.to, content: text, success: false, error: String(err), accountId: account.accountId });
           throw err;
         }
       }
@@ -289,10 +289,10 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
           token: account.token,
           contextToken,
         }});
-        emitWeixinMessageSent({ to: ctx.to, content: text, success: true, accountId: account.accountId });
+        void emitWeixinMessageSent({ to: ctx.to, content: text, success: true, accountId: account.accountId });
         return { channel: "openclaw-weixin", messageId: result.messageId };
       } catch (err) {
-        emitWeixinMessageSent({ to: ctx.to, content: text, success: false, error: String(err), accountId: account.accountId });
+        void emitWeixinMessageSent({ to: ctx.to, content: text, success: false, error: String(err), accountId: account.accountId });
         throw err;
       }
     },
