@@ -191,6 +191,7 @@ async function dispatchWithExternalProvider(
           token: deps.token ?? "",
           contextToken,
           accountId: deps.accountId,
+          cdnBaseUrl: deps.cdnBaseUrl,
         });
         logger.info(
           `[external-provider] async mode: pre-registered callback context requestId=${requestId} to=${to}`,
@@ -237,6 +238,7 @@ async function dispatchWithExternalProvider(
         token: deps.token ?? "",
         contextToken,
         accountId: deps.accountId,
+        cdnBaseUrl: deps.cdnBaseUrl,
       });
     }
     logger.info(

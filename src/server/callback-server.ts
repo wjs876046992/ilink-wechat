@@ -11,7 +11,8 @@
  *   {
  *     "requestId": "<id returned in the original POST to the external server>",
  *     "text": "Reply text to send to the user",
- *     "mediaUrl": "optional — same format as ExternalReplyResponse.mediaUrl"
+ *     "mediaUrl": "optional — single media URL (backward compatible)",
+ *     "mediaUrls": ["optional", "array of media URLs for multi-file support"]
  *   }
  *
  * Response:
@@ -24,10 +25,29 @@
  */
 
 import http from "node:http";
+import path from "node:path";
+
+import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 
 import { callbackRegistry } from "../providers/callback-registry.js";
 import { sendMessageWeixin } from "../messaging/send.js";
+import { sendWeixinMediaFile } from "../messaging/send-media.js";
+import { downloadRemoteImageToTemp } from "../cdn/upload.js";
 import { logger } from "../util/logger.js";
+
+const MEDIA_OUTBOUND_TEMP_DIR = path.join(resolvePreferredOpenClawTmpDir(), "weixin/media/outbound-temp");
+
+/** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
+function isLocalFilePath(mediaUrl: string): boolean {
+  return !mediaUrl.includes("://");
+}
+
+/** Resolve the effective filePath from a mediaUrl. */
+function resolveMediaFilePath(mediaUrl: string): string {
+  if (mediaUrl.startsWith("file://")) return new URL(mediaUrl).pathname;
+  if (!path.isAbsolute(mediaUrl)) return path.resolve(mediaUrl);
+  return mediaUrl;
+}
 
 export type CallbackServerConfig = {
   /** Port to listen on (default: 8765). */
@@ -56,8 +76,8 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
   const cbPath = cfg.path ?? DEFAULT_PATH;
   const authToken = cfg.authToken?.trim() || undefined;
 
-  // Periodically clean up expired registry entries (every minute).
-  const cleanupInterval = setInterval(() => callbackRegistry.cleanup(), 60_000);
+  // Start periodic cleanup of expired registry entries
+  callbackRegistry.startCleanup();
 
   const server = http.createServer((req, res) => {
     const respond = (status: number, body: unknown): void => {
@@ -110,9 +130,14 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
 
       const replyText = typeof body.text === "string" ? body.text.trim() : "";
       const mediaUrl = typeof body.mediaUrl === "string" ? body.mediaUrl.trim() : "";
+      // 支持 mediaUrls 数组（多图/多文件）
+      const mediaUrlsRaw = Array.isArray(body.mediaUrls) ? body.mediaUrls : [];
+      const mediaUrls = mediaUrlsRaw.filter((u: unknown): u is string => typeof u === "string" && u.trim() !== "");
+      // 合并为统一的列表：mediaUrl 优先，然后 mediaUrls
+      const allMediaUrls = mediaUrl ? [mediaUrl, ...mediaUrls] : mediaUrls;
 
-      if (!replyText && !mediaUrl) {
-        respond(400, { ok: false, error: "text or mediaUrl is required" });
+      if (!replyText && allMediaUrls.length === 0) {
+        respond(400, { ok: false, error: "text or mediaUrl(s) is required" });
         return;
       }
 
@@ -127,29 +152,54 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
       }
 
       logger.info(
-        `[callback-server] delivering async reply: requestId=${requestId} to=${ctx.to} textLen=${replyText.length} mediaUrl=${mediaUrl || "none"}`,
+        `[callback-server] delivering async reply: requestId=${requestId} to=${ctx.to} textLen=${replyText.length} mediaCount=${allMediaUrls.length}`,
       );
 
       // Fire-and-forget: send the reply to WeChat.
       Promise.resolve()
         .then(async () => {
-          if (replyText) {
+          const sendOpts = {
+            baseUrl: ctx.baseUrl,
+            token: ctx.token,
+            contextToken: ctx.contextToken,
+          };
+
+          if (allMediaUrls.length > 0) {
+            for (let i = 0; i < allMediaUrls.length; i++) {
+              const url = allMediaUrls[i];
+              // 只在第一条媒体附带文本 caption
+              const caption = i === 0 ? (replyText || "") : "";
+
+              let filePath: string;
+              if (isLocalFilePath(url)) {
+                filePath = resolveMediaFilePath(url);
+                logger.debug(`[callback-server] local media file=${filePath}`);
+              } else if (url.startsWith("http://") || url.startsWith("https://")) {
+                logger.debug(`[callback-server] downloading remote media=${url.slice(0, 80)}`);
+                filePath = await downloadRemoteImageToTemp(url, MEDIA_OUTBOUND_TEMP_DIR);
+                logger.debug(`[callback-server] remote media downloaded to=${filePath}`);
+              } else {
+                logger.warn(`[callback-server] unsupported mediaUrl scheme: ${url.slice(0, 80)}, skipping`);
+                continue;
+              }
+
+              await sendWeixinMediaFile({
+                filePath,
+                to: ctx.to,
+                text: caption,
+                opts: sendOpts,
+                cdnBaseUrl: ctx.cdnBaseUrl,
+              });
+              logger.info(`[callback-server] media[${i + 1}/${allMediaUrls.length}] sent OK to=${ctx.to} requestId=${requestId}`);
+            }
+          } else if (replyText) {
+            // Text-only reply
             await sendMessageWeixin({
               to: ctx.to,
               text: replyText,
-              opts: {
-                baseUrl: ctx.baseUrl,
-                token: ctx.token,
-                contextToken: ctx.contextToken,
-              },
+              opts: sendOpts,
             });
-          }
-          // mediaUrl delivery is not yet supported in async mode (requires CDN upload).
-          // A future enhancement can add it here.
-          if (mediaUrl && !replyText) {
-            logger.warn(
-              `[callback-server] mediaUrl-only async replies are not yet supported (requestId=${requestId})`,
-            );
+            logger.info(`[callback-server] text sent OK to=${ctx.to} requestId=${requestId}`);
           }
         })
         .catch((err: unknown) => {
@@ -173,7 +223,7 @@ export function startCallbackServer(cfg: CallbackServerConfig = {}): CallbackSer
 
   return {
     close(): Promise<void> {
-      clearInterval(cleanupInterval);
+      callbackRegistry.stopCleanup();
       return new Promise((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });

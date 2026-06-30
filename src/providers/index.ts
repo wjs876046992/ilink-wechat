@@ -67,10 +67,14 @@ export function createReplyProvider(cfg: unknown): ReplyProvider | undefined {
         `[provider] type="ws" requires a non-empty "endpoint" field in channels.openclaw-weixin.provider`,
       );
     }
+    const authMode = ["query", "message", "both"].includes(c.authMode as string)
+      ? (c.authMode as "query" | "message" | "both")
+      : undefined;
     return new WsReplyProvider({
       type: "ws",
       endpoint,
       authToken: typeof c.authToken === "string" ? c.authToken : undefined,
+      authMode,
       timeoutMs: typeof c.timeoutMs === "number" ? c.timeoutMs : undefined,
       fallbackMessage: typeof c.fallbackMessage === "string" ? c.fallbackMessage : undefined,
     } satisfies WsProviderConfig);

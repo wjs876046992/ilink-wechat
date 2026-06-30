@@ -7,7 +7,8 @@
  * when the external server eventually calls back with the reply.
  *
  * Entries expire after `ENTRY_TTL_MS` to avoid unbounded memory growth when the
- * external server never calls back.
+ * external server never calls back.  The same requestId can be consumed multiple
+ * times within the TTL window (to support multi-message replies).
  */
 
 import { logger } from "../util/logger.js";
@@ -24,15 +25,22 @@ export type PendingCallbackContext = {
   contextToken?: string;
   /** Bot account ID (for logging). */
   accountId: string;
+  /** Bot CDN base URL — required for media file uploads. */
+  cdnBaseUrl: string;
   /** Monotonic expiry timestamp (Date.now() + TTL). */
   expiresAt: number;
 };
 
-/** Entries are kept for up to 10 minutes then silently dropped. */
-const ENTRY_TTL_MS = 10 * 60 * 1_000;
+/** Default entry TTL: 10 minutes. */
+export const DEFAULT_ENTRY_TTL_MS = 10 * 60 * 1_000;
+
+/** Cleanup interval: every 30 seconds. */
+const CLEANUP_INTERVAL_MS = 30 * 1_000;
 
 class CallbackRegistry {
   private readonly pending = new Map<string, PendingCallbackContext>();
+  private cleanupTimer?: ReturnType<typeof setInterval>;
+  private entryTtlMs = DEFAULT_ENTRY_TTL_MS;
 
   /** Dump all current map keys + expiry info at DEBUG level. */
   private debugDump(op: string): void {
@@ -46,9 +54,33 @@ class CallbackRegistry {
     );
   }
 
+  /** Set custom entry TTL (in ms). Must be called before any registers. */
+  setEntryTtl(ms: number): void {
+    if (ms > 0) {
+      this.entryTtlMs = ms;
+      logger.info(`[callback-registry] entry TTL set to ${ms}ms`);
+    }
+  }
+
+  /** Start periodic cleanup. Called once by the callback server. */
+  startCleanup(): void {
+    if (this.cleanupTimer) return;
+    this.cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
+    logger.debug(`[callback-registry] cleanup started (interval=${CLEANUP_INTERVAL_MS}ms)`);
+  }
+
+  /** Stop periodic cleanup. */
+  stopCleanup(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+      logger.debug(`[callback-registry] cleanup stopped`);
+    }
+  }
+
   /** Register a pending callback context keyed by requestId. */
   register(requestId: string, ctx: Omit<PendingCallbackContext, "expiresAt">): void {
-    this.pending.set(requestId, { ...ctx, expiresAt: Date.now() + ENTRY_TTL_MS });
+    this.pending.set(requestId, { ...ctx, expiresAt: Date.now() + this.entryTtlMs });
     this.debugDump(`register(${requestId})`);
   }
 
@@ -76,11 +108,18 @@ class CallbackRegistry {
     this.debugDump(`remove(${requestId})`);
   }
 
-  /** Remove all expired entries (called periodically by the callback server). */
+  /** Remove all expired entries. */
   cleanup(): void {
     const now = Date.now();
+    let removed = 0;
     for (const [id, entry] of this.pending) {
-      if (now > entry.expiresAt) this.pending.delete(id);
+      if (now > entry.expiresAt) {
+        this.pending.delete(id);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      logger.info(`[callback-registry] cleanup: removed ${removed} expired entries`);
     }
     this.debugDump("cleanup");
   }
